@@ -35,6 +35,7 @@ public final class TestRunner extends Instrumentation {
         return (MainActivity)startActivitySync(intent);
     }
     private View text(View view,String target){
+        if(!view.isShown())return null;
         if(view instanceof TextView && ((TextView)view).getText().toString().contains(target))return view;
         if(view instanceof ViewGroup){ViewGroup group=(ViewGroup)view;for(int i=0;i<group.getChildCount();i++){View match=text(group.getChildAt(i),target);if(match!=null)return match;}}
         return null;
