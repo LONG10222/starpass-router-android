@@ -10,6 +10,7 @@ with zipfile.ZipFile(apk) as archive:
     for forbidden in (b'org/starpass/router/TestRunner',b'test-profile.json',b'example!x'):
         assert forbidden not in dex,'Test or private provisioning data found'
     assert {'assets/login.js','assets/compat.js'}<=set(archive.namelist())
+    assert not any(name.endswith('.apk') for name in archive.namelist()),'Test update fixture in production APK'
 toolsets=sorted((sdk/'build-tools').glob('*'),key=lambda p:tuple(int(n) for n in re.findall(r'\d+',p.name)))
 manifest=subprocess.check_output([str(toolsets[-1]/('aapt.exe' if os.name=='nt' else 'aapt')),'dump','xmltree',str(apk),'AndroidManifest.xml'],text=True,encoding='utf-8')
 assert 'E: instrumentation' not in manifest

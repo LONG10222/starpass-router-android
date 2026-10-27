@@ -103,6 +103,30 @@ public final class TestRunner extends Instrumentation {
         boolean wrongUri=false;try{getTargetContext().getContentResolver().getType(android.net.Uri.parse("content://"+getTargetContext().getPackageName()+".updates/../router_profile"));}catch(Exception e){wrongUri=true;}
         check(wrongUri,"provider blocks non-update paths");
         boolean readOnly=false;try{getTargetContext().getContentResolver().openFileDescriptor(UpdateProvider.uri(getTargetContext()),"w");}catch(Exception e){readOnly=true;}check(readOnly,"provider blocks write access");
+        byte[] sample="verified-update".getBytes(StandardCharsets.UTF_8);
+        String hash=AppUpdater.hex(java.security.MessageDigest.getInstance("SHA-256").digest(sample));
+        java.io.ByteArrayOutputStream out=new java.io.ByteArrayOutputStream();
+        AppUpdater.copyVerified(new java.io.ByteArrayInputStream(sample),out,sample.length,hash,()->false,p->{});check(java.util.Arrays.equals(out.toByteArray(),sample),"verified download round trip");
+        for(int mode=0;mode<4;mode++){
+            final int test=mode;boolean blocked=false;
+            try{AppUpdater.copyVerified(new java.io.ByteArrayInputStream(sample),new java.io.ByteArrayOutputStream(),test==0?sample.length-1:test==1?sample.length+1:sample.length,test==2?"wrong-hash":hash,()->test==3,p->{});}catch(Exception e){blocked=true;}
+            check(blocked,"reject oversize/truncated/corrupt/cancelled download "+mode);
+        }
+        AppUpdater updater=new AppUpdater(activity,null);
+        try{
+            for(String fixture:new String[]{"same-signer","other-signer"}){
+                File apk=new File(getTargetContext().getCacheDir(),fixture+".apk");
+                try(java.io.InputStream in=getTargetContext().getAssets().open(fixture+".apk");FileOutputStream target=new FileOutputStream(apk)){byte[] buffer=new byte[8192];int count;while((count=in.read(buffer))!=-1)target.write(buffer,0,count);}
+                if(fixture.equals("same-signer")){
+                    updater.verify(apk,"99.0.0");check(true,"new same-signer APK accepted");
+                    boolean mismatch=false;try{updater.verify(apk,"1.2.0");}catch(Exception e){mismatch=true;}check(mismatch,"tag/APK mismatch rejected");
+                }else{
+                    boolean mismatch=false;try{updater.verify(apk,"99.0.0");}catch(Exception e){mismatch=true;}check(mismatch,"different signing key rejected");
+                }
+                apk.delete();
+            }
+            boolean downgrade=false;try{updater.verify(new File(getTargetContext().getApplicationInfo().sourceDir),null);}catch(Exception e){downgrade=true;}check(downgrade,"same installed version rejected");
+        }finally{updater.close();}
     }
     @Override public void onStart(){
         Bundle result=new Bundle();

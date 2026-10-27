@@ -17,6 +17,7 @@ import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.InputStream;
+import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
@@ -108,14 +109,8 @@ final class AppUpdater {
                 if(!apk.getParentFile().isDirectory()&&!apk.getParentFile().mkdirs())throw new Exception("无法创建更新目录");
                 HttpURLConnection c=open(release.url,false);
                 try(InputStream in=c.getInputStream();FileOutputStream out=new FileOutputStream(partial)){
-                    long size=0;int count,last=-1;byte[] buffer=new byte[65536];MessageDigest digest=MessageDigest.getInstance("SHA-256");
-                    while((count=in.read(buffer))!=-1){
-                        if(closed||cancelled||Thread.currentThread().isInterrupted())throw new Exception("已取消");
-                        size+=count;if(size>release.size)throw new Exception("下载大小不符");out.write(buffer,0,count);digest.update(buffer,0,count);
-                        int percent=(int)(size*100/release.size);if(percent!=last){last=percent;ui(()->{if(dialog!=null&&!cancelled)dialog.setMessage("正在下载 "+percent+"%…");});}
-                    }
+                    copyVerified(in,out,release.size,release.hash,()->closed||cancelled,percent->ui(()->{if(dialog!=null&&!cancelled)dialog.setMessage("正在下载 "+percent+"%…");}));
                     out.getFD().sync();
-                    if(size!=release.size||!hex(digest.digest()).equals(release.hash))throw new Exception("下载校验失败，请重试");
                 }finally{c.disconnect();connection=null;}
                 verify(partial,release.version);
                 if(closed||cancelled)throw new Exception("已取消");
@@ -123,6 +118,18 @@ final class AppUpdater {
                 ui(()->{busy=false;dismiss();if(!cancelled)install();});
             }catch(Exception e){partial.delete();ui(()->{busy=false;if(!cancelled)error("更新未完成："+e.getMessage());});}
         });
+    }
+    interface Cancelled {boolean get();}
+    interface Progress {void update(int percent);}
+    static void copyVerified(InputStream in,OutputStream out,long expectedSize,String hash,Cancelled cancelled,Progress progress) throws Exception {
+        if(expectedSize<=0||expectedSize>UpdatePolicy.MAX_APK_BYTES)throw new Exception("下载大小无效");
+        long size=0;int count,last=-1;byte[] buffer=new byte[65536];MessageDigest digest=MessageDigest.getInstance("SHA-256");
+        while((count=in.read(buffer))!=-1){
+            if(cancelled.get()||Thread.currentThread().isInterrupted())throw new Exception("已取消");
+            size+=count;if(size>expectedSize)throw new Exception("下载大小不符");out.write(buffer,0,count);digest.update(buffer,0,count);
+            int percent=(int)(size*100/expectedSize);if(percent!=last){last=percent;progress.update(percent);}
+        }
+        if(size!=expectedSize||!hex(digest.digest()).equals(hash))throw new Exception("下载校验失败，请重试");
     }
     static String hex(byte[] bytes){StringBuilder s=new StringBuilder();for(byte b:bytes)s.append(String.format(java.util.Locale.ROOT,"%02x",b&255));return s.toString();}
     private long versionCode(PackageInfo info){return Build.VERSION.SDK_INT>=28?info.getLongVersionCode():info.versionCode;}

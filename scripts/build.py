@@ -7,7 +7,7 @@ ROOT=Path(__file__).resolve().parents[1]
 A='{http://schemas.android.com/apk/res/android}'
 
 def run(args,**kwargs):subprocess.run([str(a) for a in args],check=True,**kwargs)
-def build(debug,require_existing_key=False):
+def build(debug,require_existing_key=False,fixture=None):
     sdk=Path(os.environ.get('ANDROID_HOME',str(Path.home()/'Library/Android/sdk')))
     java=Path(os.environ.get('JAVA_HOME','/Applications/Android Studio.app/Contents/jbr/Contents/Home'))
     platforms=sorted((sdk/'platforms').glob('android-36*/android.jar'))
@@ -17,10 +17,11 @@ def build(debug,require_existing_key=False):
     gradle=(ROOT/'app/build.gradle').read_text()
     version=re.search(r"versionName '([^']+)'",gradle).group(1)
     code=re.search(r'versionCode (\d+)',gradle).group(1)
+    if fixture:version='99.0.0';code='999999'
     def jdk(name):return java/'bin'/(name+('.exe' if os.name=='nt' else ''))
     def native(name):return tools/(name+('.exe' if os.name=='nt' else ''))
     env={**os.environ,'JAVA_HOME':str(java),'PATH':str(java/'bin')+os.pathsep+os.environ['PATH']}
-    folder=ROOT/'build'/('debug' if debug else 'release');folder.mkdir(parents=True,exist_ok=True)
+    folder=ROOT/'build'/(('fixture-'+fixture) if fixture else ('debug' if debug else 'release'));folder.mkdir(parents=True,exist_ok=True)
     classes=folder/'classes';generated=folder/'generated/org/starpass/router';classes.mkdir(exist_ok=True);generated.mkdir(parents=True,exist_ok=True)
     # Do not retain classes of a previous source set in a production build.
     for file in classes.rglob('*.class'):file.unlink()
@@ -37,12 +38,15 @@ def build(debug,require_existing_key=False):
     compiled=folder/'resources.zip'
     run([native('aapt2'),'compile','--dir',ROOT/'app/src/main/res','-o',compiled],env=env)
     unsigned=folder/'unsigned.apk'
-    run([native('aapt2'),'link','-I',platform,'--manifest',folder/'AndroidManifest.xml','--version-code',code,'--version-name',version,'-A',ROOT/'app/src/main/assets','-o',unsigned,compiled],env=env)
+    assets=['-A',ROOT/'app/src/main/assets']
+    if debug and (ROOT/'build/test-assets').is_dir():assets+=['-A',ROOT/'build/test-assets']
+    run([native('aapt2'),'link','-I',platform,'--manifest',folder/'AndroidManifest.xml','--version-code',code,'--version-name',version]+assets+['-o',unsigned,compiled],env=env)
     run([jdk('java'),'-cp',tools/'lib/d8.jar','com.android.tools.r8.D8','--release','--min-api','26','--lib',platform,'--output',folder]+list(classes.rglob('*.class')),env=env)
     with zipfile.ZipFile(unsigned,'a',compression=zipfile.ZIP_DEFLATED) as archive:
         for dex in folder.glob('classes*.dex'):archive.write(dex,dex.name)
     aligned=folder/'aligned.apk';run([native('zipalign'),'-f','4',unsigned,aligned],env=env)
     signing=Path(os.environ.get('ROUTER_SIGNING_DIR',str(ROOT/'.signing')))
+    if fixture=='other-signer':signing=ROOT/'build/fixture-signing'
     if require_existing_key and not all((signing/name).is_file() for name in ('key.json','starpass-router.jks')):raise SystemExit('Release requires the existing signing key; refusing to create a new identity')
     signing.mkdir(exist_ok=True,mode=0o700);os.chmod(signing,0o700)
     metadata=signing/'key.json';keystore=signing/'starpass-router.jks'
@@ -59,4 +63,9 @@ def build(debug,require_existing_key=False):
     print(hashlib.sha256(output.read_bytes()).hexdigest(),output)
     return output
 if __name__=='__main__':
-    p=argparse.ArgumentParser();p.add_argument('--debug',action='store_true');p.add_argument('--require-existing-key',action='store_true');args=p.parse_args();build(args.debug,args.require_existing_key)
+    p=argparse.ArgumentParser();p.add_argument('--debug',action='store_true');p.add_argument('--require-existing-key',action='store_true');p.add_argument('--test-update-fixtures',action='store_true');args=p.parse_args()
+    if args.test_update_fixtures:
+        if not args.debug:p.error('--test-update-fixtures requires --debug')
+        assets=ROOT/'build/test-assets';assets.mkdir(parents=True,exist_ok=True)
+        for fixture in ('same-signer','other-signer'):shutil.copyfile(build(False,fixture=fixture),assets/(fixture+'.apk'))
+    build(args.debug,args.require_existing_key)
