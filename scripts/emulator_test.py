@@ -14,6 +14,9 @@ try:
         except OSError:time.sleep(.1)
     apk=next((ROOT/'build/debug').glob('*-test.apk'))
     adb('install','-r',str(apk));adb('shell','pm','clear','org.starpass.router')
+    # As in Android CTS window-insets tests, suppress the one-time system tutorial.
+    # Some emulator images crash system_server when its tutorial rotates with a fake cutout.
+    adb('shell','settings','put','secure','immersive_mode_confirmations','confirmed')
     # Match the Redmi K70 Pro's tall display proportions; the emulator is not a HyperOS device.
     adb('shell','wm','size','1440x3200');adb('shell','wm','density','560')
     overlay='com.android.internal.display.cutout.emulation.tall'
