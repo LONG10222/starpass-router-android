@@ -209,7 +209,9 @@ public final class MainActivity extends Activity {
         web=new WebView(this);web.setId(WEB_ID);web.setSaveEnabled(false);web.setBackgroundColor(Color.WHITE);
         WebSettings config=web.getSettings();config.setJavaScriptEnabled(true);config.setDomStorageEnabled(true);
         config.setAllowFileAccess(false);config.setAllowContentAccess(true);config.setJavaScriptCanOpenWindowsAutomatically(false);
-        config.setSupportMultipleWindows(false);config.setUseWideViewPort(true);config.setLoadWithOverviewMode(true);
+        // Use the actual phone viewport. Overview scaling can shrink a wide LuCI panel to tiny text.
+        config.setSupportMultipleWindows(false);config.setUseWideViewPort(false);config.setLoadWithOverviewMode(false);
+        config.setLayoutAlgorithm(WebSettings.LayoutAlgorithm.NORMAL);config.setTextZoom(100);
         config.setBuiltInZoomControls(true);config.setDisplayZoomControls(false);config.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);
         CookieManager.getInstance().setAcceptCookie(true);CookieManager.getInstance().setAcceptThirdPartyCookies(web,false);
         WebView.setWebContentsDebuggingEnabled(BuildConfig.DEBUG);

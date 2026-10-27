@@ -26,7 +26,9 @@ def build(debug,require_existing_key=False,fixture=None):
     # Do not retain classes of a previous source set in a production build.
     for file in classes.rglob('*.class'):file.unlink()
     manifest=ET.parse(ROOT/'app/src/main/AndroidManifest.xml');node=manifest.getroot();node.set('package','org.starpass.router')
-    uses=ET.SubElement(node,'uses-sdk');uses.set(A+'minSdkVersion','26');uses.set(A+'targetSdkVersion','36')
+    # Package parsers apply target-SDK defaults while parsing <application>.
+    # An SDK declaration appended after it can enable legacy aspect-ratio compatibility.
+    uses=ET.Element('uses-sdk');uses.set(A+'minSdkVersion','26');uses.set(A+'targetSdkVersion','36');node.insert(0,uses)
     app=node.find('application');app.set(A+'debuggable','true' if debug else 'false')
     if debug:
         runner=ET.SubElement(node,'instrumentation');runner.set(A+'name','org.starpass.router.TestRunner');runner.set(A+'targetPackage','org.starpass.router')

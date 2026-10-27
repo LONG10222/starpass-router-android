@@ -25,7 +25,11 @@ public final class TestRunner extends Instrumentation {
     private int checks=0;
     @Override public void onCreate(Bundle bundle){arguments=bundle;start();}
     private void check(boolean value,String message){checks++;if(!value)throw new AssertionError(message);}
-    private void ui(Runnable action){runOnMainSync(action);}
+    private void ui(Runnable action){
+        AtomicReference<Throwable> error=new AtomicReference<>();
+        runOnMainSync(()->{try{action.run();}catch(Throwable e){error.set(e);}});
+        if(error.get()!=null)throw new AssertionError(error.get().getMessage(),error.get());
+    }
     private MainActivity launch(){
         Intent intent=new Intent(getTargetContext(),MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
         return (MainActivity)startActivitySync(intent);
@@ -87,6 +91,13 @@ public final class TestRunner extends Instrumentation {
             check(web.getHeight()==metrics.heightPixels,"fullscreen display height: "+web.getHeight()+"/"+metrics.heightPixels);
             check(visible(text(activity.getWindow().getDecorView(),"菜单")),"fullscreen menu reachable");
         });
+        java.util.concurrent.CountDownLatch latch=new java.util.concurrent.CountDownLatch(1);AtomicReference<String> dimensions=new AtomicReference<>();
+        ui(()->{WebView web=activity.findViewById(MainActivity.WEB_ID);float width=web.getWidth()/activity.getResources().getDisplayMetrics().density;
+            web.evaluateJavascript("JSON.stringify({width:innerWidth,scale:window.visualViewport?visualViewport.scale:1,expected:"+width+"})",v->{dimensions.set(v);latch.countDown();});});
+        check(latch.await(5,java.util.concurrent.TimeUnit.SECONDS),"web viewport available");
+        String value=new org.json.JSONArray("["+dimensions.get()+"]").getString(0);org.json.JSONObject viewport=new org.json.JSONObject(value);
+        check(Math.abs(viewport.getDouble("width")-viewport.getDouble("expected"))<3,"phone-sized CSS viewport "+value);
+        check(viewport.getDouble("scale")>=0.9,"page not shrunk to overview");
     }
     private void checkReleaseParser() throws Exception {
         org.json.JSONObject json=new org.json.JSONObject("{\"tag_name\":\"v1.2.0\",\"assets\":[]}");

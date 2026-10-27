@@ -14,6 +14,7 @@ with zipfile.ZipFile(apk) as archive:
 toolsets=sorted((sdk/'build-tools').glob('*'),key=lambda p:tuple(int(n) for n in re.findall(r'\d+',p.name)))
 manifest=subprocess.check_output([str(toolsets[-1]/('aapt.exe' if os.name=='nt' else 'aapt')),'dump','xmltree',str(apk),'AndroidManifest.xml'],text=True,encoding='utf-8')
 assert 'E: instrumentation' not in manifest
+assert manifest.index('E: uses-sdk')<manifest.index('E: application'),'SDK defaults must be established before parsing the application'
 for attribute in ('debuggable','allowBackup','fullBackupContent'):
     assert re.search(r':'+attribute+r'\([^)]*\)=\(type 0x12\)0x0\b',manifest),attribute
 assert manifest.count('E: uses-permission')==2 and 'android.permission.INTERNET' in manifest and 'android.permission.REQUEST_INSTALL_PACKAGES' in manifest
