@@ -1,6 +1,7 @@
 name: checks
 on:
   push:
+    branches: [main]
   pull_request:
 permissions:
   contents: read
@@ -21,8 +22,9 @@ jobs:
       - name: Address and origin policy
         run: |
           mkdir -p build/unit
-          javac --release 17 -encoding UTF-8 -d build/unit app/src/main/java/org/starpass/router/SitePolicy.java tests/org/starpass/router/SitePolicyTest.java
+          javac --release 17 -encoding UTF-8 -d build/unit app/src/main/java/org/starpass/router/SitePolicy.java app/src/main/java/org/starpass/router/UpdatePolicy.java tests/org/starpass/router/SitePolicyTest.java tests/org/starpass/router/UpdatePolicyTest.java
           java -cp build/unit org.starpass.router.SitePolicyTest
+          java -cp build/unit org.starpass.router.UpdatePolicyTest
       - name: Login form boundaries
         run: node tests/login-script.js
       - name: Reject private build and signing artifacts
@@ -36,3 +38,47 @@ jobs:
               assert path.suffix not in {'.apk', '.jks', '.keystore', '.idsig', '.pyc'}, name
           print('Tracked source excludes signing keys and private build files')
           PY
+  android-ui:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        api: [30, 35, 36]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+          log-accepted-android-sdk-licenses: false
+      - name: Install build tools
+        run: sdkmanager 'platforms;android-36' 'build-tools;36.0.0'
+      - name: Build and audit
+        run: |
+          python3 scripts/build.py
+          python3 scripts/audit.py
+          python3 scripts/build.py --debug --test-update-fixtures
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: ${{ matrix.api }}
+          arch: x86_64
+          target: google_apis
+          profile: pixel_6
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none
+          script: python3 scripts/emulator_test.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: android-${{ matrix.api }}-test-evidence
+          path: build/emulator/

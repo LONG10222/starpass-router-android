@@ -1,0 +1,58 @@
+name: signed-release
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag matching app/build.gradle, for example v1.1.0'
+        required: true
+permissions:
+  contents: write
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+          log-accepted-android-sdk-licenses: false
+      - run: sdkmanager 'platforms;android-36' 'build-tools;36.0.0'
+      - name: Restore existing signing identity
+        env:
+          SIGNING_KEY_BASE64: ${{ secrets.STARPASS_KEYSTORE_BASE64 }}
+          SIGNING_PASSWORD: ${{ secrets.STARPASS_KEYSTORE_PASSWORD }}
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          python3 - <<'PY'
+          import base64, json, os, pathlib, re
+          version = re.search(r"versionName '([^']+)'", pathlib.Path('app/build.gradle').read_text()).group(1)
+          assert os.environ['RELEASE_TAG'] == 'v'+version, 'Tag must match the source version'
+          assert os.environ['SIGNING_KEY_BASE64'] and os.environ['SIGNING_PASSWORD'], 'Configure the original signing secrets first'
+          folder = pathlib.Path('.signing'); folder.mkdir(mode=0o700)
+          (folder/'starpass-router.jks').write_bytes(base64.b64decode(os.environ['SIGNING_KEY_BASE64'], validate=True))
+          (folder/'key.json').write_text(json.dumps({'password':os.environ['SIGNING_PASSWORD']}))
+          for file in folder.iterdir(): file.chmod(0o600)
+          PY
+      - name: Build verified release APK
+        run: |
+          python3 scripts/build.py --require-existing-key
+          python3 scripts/audit.py build/release/StarPass-Router-*.apk
+          cd build/release
+          sha256sum StarPass-Router-*.apk > SHA256SUMS.txt
+      - name: Publish signed APK
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          gh release create "$RELEASE_TAG" build/release/StarPass-Router-*.apk build/release/SHA256SUMS.txt --target "$GITHUB_SHA" --title "星渡路由 $RELEASE_TAG" --generate-notes --draft
+          gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" --jq '.assets[] | select(.name | endswith(".apk")) | .digest' | python3 -c 'import re,sys; assert re.fullmatch(r"sha256:[0-9a-f]{64}",sys.stdin.read().strip()), "GitHub asset digest is required"'
+          gh release edit "$RELEASE_TAG" --draft=false --latest
+      - name: Remove runner signing material
+        if: always()
+        run: python3 -c "import shutil; shutil.rmtree('.signing', ignore_errors=True)"

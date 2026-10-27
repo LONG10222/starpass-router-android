@@ -18,6 +18,8 @@ import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.WindowInsets;
+import android.view.WindowInsetsController;
+import android.view.WindowManager;
 import android.view.inputmethod.InputMethodManager;
 import android.webkit.CookieManager;
 import android.webkit.JsResult;
@@ -34,6 +36,7 @@ import android.widget.Button;
 import android.widget.CheckBox;
 import android.widget.EditText;
 import android.widget.LinearLayout;
+import android.widget.FrameLayout;
 import android.widget.ProgressBar;
 import android.widget.ScrollView;
 import android.widget.TextView;
@@ -52,6 +55,11 @@ public final class MainActivity extends Activity {
     static final int FILE_PICK=41,SAVE_DOWNLOAD=42;
     private static final int PURPLE=0xff6554c0,TEXT=0xff29223f,NOTE=0xff6c647e,BG=0xfff6f4fb;
     private LinearLayout root,browser;
+    private FrameLayout surface;
+    private View toolbar;
+    private Button floatingMenu;
+    private boolean fullscreen=true;
+    private AppUpdater updater;
     private View loginPanel;
     private TextView message,browserStatus;
     private EditText siteInput,userInput,passwordInput;
@@ -68,6 +76,8 @@ public final class MainActivity extends Activity {
 
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
+        fullscreen=getPreferences(0).getBoolean("fullscreen",true);
+        updater=new AppUpdater(this,state);
         store=new CredentialStore(this);
         try(InputStream in=getAssets().open("login.js")){loginScript=readAsset(in);}
         catch(Exception e){throw new IllegalStateException("Missing login helper");}
@@ -75,18 +85,38 @@ public final class MainActivity extends Activity {
         catch(Exception e){throw new IllegalStateException("Missing compatibility helper");}
         root=new LinearLayout(this);root.setOrientation(LinearLayout.VERTICAL);root.setBackgroundColor(BG);
         root.setImportantForAutofill(View.IMPORTANT_FOR_AUTOFILL_NO_EXCLUDE_DESCENDANTS);
-        setContentView(root);
+        surface=new FrameLayout(this);surface.setBackgroundColor(BG);
+        surface.addView(root,new FrameLayout.LayoutParams(-1,-1));setContentView(surface);
+        if(Build.VERSION.SDK_INT>=28){
+            WindowManager.LayoutParams attrs=getWindow().getAttributes();
+            attrs.layoutInDisplayCutoutMode=Build.VERSION.SDK_INT>=30?WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS:WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES;
+            getWindow().setAttributes(attrs);
+        }
         if(Build.VERSION.SDK_INT>=30) {
             getWindow().setDecorFitsSystemWindows(false);
-            root.setOnApplyWindowInsetsListener((v,insets)->{
+            surface.setOnApplyWindowInsetsListener((v,insets)->{
                 android.graphics.Insets bars=insets.getInsets(WindowInsets.Type.systemBars()|WindowInsets.Type.displayCutout());
-                int bottom=Math.max(bars.bottom,insets.getInsets(WindowInsets.Type.ime()).bottom);
-                v.setPadding(bars.left,bars.top,bars.right,bottom);return insets;
+                int ime=insets.getInsets(WindowInsets.Type.ime()).bottom;
+                boolean full=isBrowserFullscreen();
+                root.setPadding(full?0:bars.left,full?0:bars.top,full?0:bars.right,full?ime:Math.max(bars.bottom,ime));
+                if(floatingMenu!=null){FrameLayout.LayoutParams p=(FrameLayout.LayoutParams)floatingMenu.getLayoutParams();p.rightMargin=dp(12)+bars.right;p.bottomMargin=dp(12)+Math.max(bars.bottom,ime);floatingMenu.setLayoutParams(p);}
+                return insets;
             });
-        } else root.setFitsSystemWindows(true);
+        } else {
+            surface.setSystemUiVisibility(View.SYSTEM_UI_FLAG_LAYOUT_STABLE|View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN|View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION);
+            surface.setOnApplyWindowInsetsListener((v,insets)->{
+                boolean full=isBrowserFullscreen();
+                root.setPadding(full?0:insets.getSystemWindowInsetLeft(),full?0:insets.getSystemWindowInsetTop(),full?0:insets.getSystemWindowInsetRight(),insets.getSystemWindowInsetBottom());
+                return insets;
+            });
+        }
         String error=null;
         try{profile=store.load();}catch(Exception e){error="原登录信息暂时无法读取，请重新填写。";}
         createLogin();createBrowser();
+        floatingMenu=button("菜单",false);floatingMenu.setContentDescription("全屏菜单");
+        FrameLayout.LayoutParams menuParams=new FrameLayout.LayoutParams(dp(64),dp(48),Gravity.BOTTOM|Gravity.RIGHT);
+        menuParams.setMargins(dp(12),dp(12),dp(12),dp(12));surface.addView(floatingMenu,menuParams);
+        floatingMenu.setOnClickListener(v->showBrowserMenu());
         if(Build.VERSION.SDK_INT>=33)getOnBackInvokedDispatcher().registerOnBackInvokedCallback(android.window.OnBackInvokedDispatcher.PRIORITY_DEFAULT,this::navigateBack);
         if(profile!=null)connect(profile);else showLogin(error);
     }
@@ -129,6 +159,7 @@ public final class MainActivity extends Activity {
         form.addView(reveal);gap(form,14);
         Button login=button("登录并记住",true);login.setId(LOGIN_ID);login.setMinHeight(dp(52));form.addView(login,new LinearLayout.LayoutParams(-1,-2));
         gap(form,16);form.addView(label("登录信息保存在本机，下次自动进入。\n请让手机连接同一局域网。",13,NOTE));
+        gap(form,16);Button updates=button("检查更新 · v"+updater.currentVersion(),false);form.addView(updates,matchWrap());updates.setOnClickListener(v->updater.check());
         message=label("",14,0xffa44524);gap(form,12);form.addView(message,matchWrap());
         login.setOnClickListener(v->saveAndConnect());
         passwordInput.setImeOptions(android.view.inputmethod.EditorInfo.IME_ACTION_GO);
@@ -164,12 +195,13 @@ public final class MainActivity extends Activity {
         loginPanel.setVisibility(View.VISIBLE);browser.setVisibility(View.GONE);
         if(profile!=null){siteInput.setText(profile.site);userInput.setText(profile.user);passwordInput.setText(profile.password);}
         message.setText(reason==null?"":reason);
+        applyDisplayMode();
     }
     private void createBrowser() {
         browser=new LinearLayout(this);browser.setOrientation(LinearLayout.VERTICAL);
-        LinearLayout toolbar=new LinearLayout(this);toolbar.setGravity(Gravity.CENTER_VERTICAL);toolbar.setPadding(dp(12),dp(6),dp(12),dp(6));
+        LinearLayout toolbar=new LinearLayout(this);this.toolbar=toolbar;toolbar.setGravity(Gravity.CENTER_VERTICAL);toolbar.setPadding(dp(12),dp(6),dp(12),dp(6));
         TextView title=label("星渡路由",16,TEXT);title.setTypeface(null,Typeface.BOLD);toolbar.addView(title,new LinearLayout.LayoutParams(0,-2,1));
-        Button refresh=button("刷新",false);Button settings=button("登录设置",false);
+        Button refresh=button("刷新",false);Button settings=button("菜单",false);
         toolbar.addView(refresh,new LinearLayout.LayoutParams(dp(64),dp(42)));
         LinearLayout.LayoutParams settingParams=new LinearLayout.LayoutParams(dp(92),dp(42));settingParams.leftMargin=dp(8);toolbar.addView(settings,settingParams);
         browser.addView(toolbar);browserStatus=label("",12,NOTE);browserStatus.setPadding(dp(14),0,dp(14),dp(5));browser.addView(browserStatus);
@@ -177,7 +209,9 @@ public final class MainActivity extends Activity {
         web=new WebView(this);web.setId(WEB_ID);web.setSaveEnabled(false);web.setBackgroundColor(Color.WHITE);
         WebSettings config=web.getSettings();config.setJavaScriptEnabled(true);config.setDomStorageEnabled(true);
         config.setAllowFileAccess(false);config.setAllowContentAccess(true);config.setJavaScriptCanOpenWindowsAutomatically(false);
-        config.setSupportMultipleWindows(false);config.setUseWideViewPort(true);config.setLoadWithOverviewMode(true);
+        // Use the actual phone viewport. Overview scaling can shrink a wide LuCI panel to tiny text.
+        config.setSupportMultipleWindows(false);config.setUseWideViewPort(false);config.setLoadWithOverviewMode(false);
+        config.setLayoutAlgorithm(WebSettings.LayoutAlgorithm.NORMAL);config.setTextZoom(100);
         config.setBuiltInZoomControls(true);config.setDisplayZoomControls(false);config.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);
         CookieManager.getInstance().setAcceptCookie(true);CookieManager.getInstance().setAcceptThirdPartyCookies(web,false);
         WebView.setWebContentsDebuggingEnabled(BuildConfig.DEBUG);
@@ -227,8 +261,31 @@ public final class MainActivity extends Activity {
             try{startActivityForResult(intent,SAVE_DOWNLOAD);}catch(ActivityNotFoundException e){pendingDownload=null;browserStatus.setText("系统文件保存界面不可用。");}
         });
         browser.addView(web,new LinearLayout.LayoutParams(-1,0,1));root.addView(browser,new LinearLayout.LayoutParams(-1,0,1));
-        settings.setOnClickListener(v->showLogin(null));refresh.setOnClickListener(v->{if(profile!=null){attempted=false;suspended=false;if(SitePolicy.sameOrigin(profile.site,web.getUrl()))web.reload();else web.loadUrl(profile.site);}});
+        settings.setOnClickListener(v->showBrowserMenu());refresh.setOnClickListener(v->refreshPage());
     }
+    private void refreshPage(){if(profile!=null){attempted=false;suspended=false;if(SitePolicy.sameOrigin(profile.site,web.getUrl()))web.reload();else web.loadUrl(profile.site);}}
+    private void showBrowserMenu(){
+        new AlertDialog.Builder(this).setTitle("星渡路由 · v"+updater.currentVersion())
+            .setItems(new String[]{fullscreen?"退出全屏":"进入全屏","刷新网页","登录设置","检查更新"},(d,index)->{
+                if(index==0){fullscreen=!fullscreen;getPreferences(0).edit().putBoolean("fullscreen",fullscreen).apply();applyDisplayMode();}
+                else if(index==1)refreshPage();else if(index==2)showLogin(null);else updater.check();
+            }).show();
+    }
+    private boolean isBrowserFullscreen(){return fullscreen&&browser!=null&&browser.getVisibility()==View.VISIBLE;}
+    private void applyDisplayMode(){
+        boolean full=isBrowserFullscreen();toolbar.setVisibility(full?View.GONE:View.VISIBLE);
+        browserStatus.setVisibility(full?View.GONE:View.VISIBLE);floatingMenu.setVisibility(full?View.VISIBLE:View.GONE);
+        if(Build.VERSION.SDK_INT>=30){
+            WindowInsetsController controller=getWindow().getInsetsController();
+            if(controller!=null){controller.setSystemBarsBehavior(WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE);if(full)controller.hide(WindowInsets.Type.systemBars());else controller.show(WindowInsets.Type.systemBars());}
+        }else{
+            int flags=View.SYSTEM_UI_FLAG_LAYOUT_STABLE|View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN|View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION;
+            if(full)flags|=View.SYSTEM_UI_FLAG_FULLSCREEN|View.SYSTEM_UI_FLAG_HIDE_NAVIGATION|View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY;
+            surface.setSystemUiVisibility(flags);
+        }
+        surface.requestApplyInsets();
+    }
+    @Override public void onWindowFocusChanged(boolean focus){super.onWindowFocusChanged(focus);if(focus&&floatingMenu!=null)applyDisplayMode();}
     private String script(boolean submit) {
         String args=JSONObject.quote(SitePolicy.origin(profile.site))+","+JSONObject.quote(submit?profile.user:"")+","+JSONObject.quote(submit?profile.password:"")+","+submit;
         return loginScript.replace("/*ARGS*/",args);
@@ -248,6 +305,7 @@ public final class MainActivity extends Activity {
         attempted=false;suspended=false;pageGeneration++;loginPanel.setVisibility(View.GONE);browser.setVisibility(View.VISIBLE);message.setText("");
         // Reuse an existing authenticated page when opening settings; never call logout.
         web.loadUrl(value.site);
+        applyDisplayMode();
     }
     private void openExternal(String target) {
         try {Uri uri=Uri.parse(target);if(!"https".equals(uri.getScheme())&&!"http".equals(uri.getScheme()))return;
@@ -288,11 +346,12 @@ public final class MainActivity extends Activity {
         });
     }
     private void navigateBack(){
-        if(loginPanel.getVisibility()==View.VISIBLE&&profile!=null&&web.getUrl()!=null){loginPanel.setVisibility(View.GONE);browser.setVisibility(View.VISIBLE);return;}
+        if(loginPanel.getVisibility()==View.VISIBLE&&profile!=null&&web.getUrl()!=null){loginPanel.setVisibility(View.GONE);browser.setVisibility(View.VISIBLE);applyDisplayMode();return;}
         if(browser.getVisibility()==View.VISIBLE&&web.canGoBack())web.goBack();else finish();
     }
     @Override public void onBackPressed(){navigateBack();}
     @Override protected void onPause(){super.onPause();if(web!=null){CookieManager.getInstance().flush();web.onPause();}}
-    @Override protected void onResume(){super.onResume();if(web!=null)web.onResume();}
-    @Override protected void onDestroy(){destroyed=true;if(fileCallback!=null)fileCallback.onReceiveValue(null);downloads.shutdown();if(web!=null){((ViewGroup)web.getParent()).removeView(web);web.destroy();}super.onDestroy();}
+    @Override protected void onResume(){super.onResume();if(web!=null)web.onResume();if(updater!=null)updater.onResume();}
+    @Override protected void onSaveInstanceState(Bundle state){super.onSaveInstanceState(state);updater.saveState(state);}
+    @Override protected void onDestroy(){destroyed=true;if(updater!=null)updater.close();if(fileCallback!=null)fileCallback.onReceiveValue(null);downloads.shutdown();if(web!=null){((ViewGroup)web.getParent()).removeView(web);web.destroy();}super.onDestroy();}
 }

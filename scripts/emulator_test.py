@@ -1,0 +1,52 @@
+#!/usr/bin/env python3
+"""Run real WebView/UI regression checks against the loopback LuCI fixture."""
+import json,os,subprocess,sys,time,urllib.request
+from pathlib import Path
+ROOT=Path(__file__).resolve().parents[1]
+OUT=ROOT/'build/emulator';OUT.mkdir(parents=True,exist_ok=True)
+ADB=os.environ.get('ADB','adb')
+def adb(*args):return subprocess.check_output([ADB,*args],text=True,encoding='utf-8')
+def status():return json.load(urllib.request.urlopen('http://127.0.0.1:18086/testing/status'))
+server=subprocess.Popen([sys.executable,str(ROOT/'tests/router_fixture.py')])
+launcher_disabled=False
+try:
+    for _ in range(50):
+        try:status();break
+        except OSError:time.sleep(.1)
+    if adb('shell','getprop','ro.kernel.qemu').strip()!='1':raise SystemExit('This test clears app data and must only run on a disposable Android emulator')
+    # The API-35 Google image's Pixel Launcher can ANR after display overrides,
+    # occluding the app under test. The app does not depend on a home launcher.
+    if adb('shell','getprop','ro.build.version.sdk').strip()=='35':
+        adb('shell','pm','disable-user','--user','0','com.google.android.apps.nexuslauncher');launcher_disabled=True
+    apk=next((ROOT/'build/debug').glob('*-test.apk'))
+    adb('install','-r',str(apk));adb('shell','pm','clear','org.starpass.router')
+    # As in Android CTS window-insets tests, suppress the one-time system tutorial.
+    # Some emulator images crash system_server when its tutorial rotates with a fake cutout.
+    adb('shell','settings','put','secure','immersive_mode_confirmations','confirmed')
+    # Match the Redmi K70 Pro's tall display proportions; the emulator is not a HyperOS device.
+    adb('shell','wm','size','1440x3200');adb('shell','wm','density','560')
+    overlay='com.android.internal.display.cutout.emulation.tall'
+    cutout=overlay in adb('shell','cmd','overlay','list')
+    if cutout:adb('shell','cmd','overlay','enable','--user','0',overlay)
+    (OUT/'device.json').write_text(json.dumps({'api':adb('shell','getprop','ro.build.version.sdk').strip(),'size':'1440x3200','density':560,'simulated_cutout':cutout}))
+    for phase in ('initial','reopen','expired'):
+        if phase=='expired':urllib.request.urlopen('http://127.0.0.1:18086/testing/expire').close()
+        adb('shell','am','force-stop','org.starpass.router')
+        output=adb('shell','am','instrument','-w','-e','phase',phase,'org.starpass.router/.TestRunner')
+        (OUT/f'{phase}.txt').write_text(output,encoding='utf-8');print(output,flush=True)
+        assert f'PASS {phase}' in output,output
+        current=status();expected=3 if phase=='expired' else 2
+        assert current['attempts']==expected and current['logouts']==0,current
+    (OUT/'fixture-state.json').write_text(json.dumps(status(),indent=2))
+    print('PASS all emulator phases; password attempts bounded, zero logout requests')
+finally:
+    try:
+        for name in adb('shell','run-as','org.starpass.router','ls','files').splitlines():
+            if name.endswith('.png'):(OUT/name).write_bytes(subprocess.check_output([ADB,'exec-out','run-as','org.starpass.router','cat','files/'+name]))
+        (OUT/'last-screen.png').write_bytes(subprocess.check_output([ADB,'exec-out','screencap','-p']))
+        (OUT/'logcat.txt').write_text(adb('logcat','-d','-t','1500'),encoding='utf-8')
+    except Exception as error:print('Evidence collection:',error)
+    if launcher_disabled:
+        try:adb('shell','pm','enable','--user','0','com.google.android.apps.nexuslauncher')
+        except Exception as error:print('Launcher restoration:',error)
+    server.terminate();server.wait(timeout=10)
