@@ -8,10 +8,16 @@ ADB=os.environ.get('ADB','adb')
 def adb(*args):return subprocess.check_output([ADB,*args],text=True,encoding='utf-8')
 def status():return json.load(urllib.request.urlopen('http://127.0.0.1:18086/testing/status'))
 server=subprocess.Popen([sys.executable,str(ROOT/'tests/router_fixture.py')])
+launcher_disabled=False
 try:
     for _ in range(50):
         try:status();break
         except OSError:time.sleep(.1)
+    if adb('shell','getprop','ro.kernel.qemu').strip()!='1':raise SystemExit('This test clears app data and must only run on a disposable Android emulator')
+    # The API-35 Google image's Pixel Launcher can ANR after display overrides,
+    # occluding the app under test. The app does not depend on a home launcher.
+    if adb('shell','getprop','ro.build.version.sdk').strip()=='35':
+        adb('shell','pm','disable-user','--user','0','com.google.android.apps.nexuslauncher');launcher_disabled=True
     apk=next((ROOT/'build/debug').glob('*-test.apk'))
     adb('install','-r',str(apk));adb('shell','pm','clear','org.starpass.router')
     # As in Android CTS window-insets tests, suppress the one-time system tutorial.
@@ -40,4 +46,7 @@ finally:
         (OUT/'last-screen.png').write_bytes(subprocess.check_output([ADB,'exec-out','screencap','-p']))
         (OUT/'logcat.txt').write_text(adb('logcat','-d','-t','1500'),encoding='utf-8')
     except Exception as error:print('Evidence collection:',error)
+    if launcher_disabled:
+        try:adb('shell','pm','enable','--user','0','com.google.android.apps.nexuslauncher')
+        except Exception as error:print('Launcher restoration:',error)
     server.terminate();server.wait(timeout=10)
