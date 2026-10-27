@@ -16,6 +16,10 @@ try:
     adb('install','-r',str(apk));adb('shell','pm','clear','org.starpass.router')
     # Match the Redmi K70 Pro's tall display proportions; the emulator is not a HyperOS device.
     adb('shell','wm','size','1440x3200');adb('shell','wm','density','560')
+    overlay='com.android.internal.display.cutout.emulation.tall'
+    cutout=overlay in adb('shell','cmd','overlay','list')
+    if cutout:adb('shell','cmd','overlay','enable','--user','0',overlay)
+    (OUT/'device.json').write_text(json.dumps({'api':adb('shell','getprop','ro.build.version.sdk').strip(),'size':'1440x3200','density':560,'simulated_cutout':cutout}))
     for phase in ('initial','reopen','expired'):
         if phase=='expired':urllib.request.urlopen('http://127.0.0.1:18086/testing/expire').close()
         adb('shell','am','force-stop','org.starpass.router')
@@ -24,11 +28,13 @@ try:
         assert f'PASS {phase}' in output,output
         current=status();expected=3 if phase=='expired' else 2
         assert current['attempts']==expected and current['logouts']==0,current
-    names=adb('shell','run-as','org.starpass.router','ls','files').splitlines()
-    for name in names:
-        if name.endswith('.png'):
-            (OUT/name).write_bytes(subprocess.check_output([ADB,'exec-out','run-as','org.starpass.router','cat','files/'+name]))
     (OUT/'fixture-state.json').write_text(json.dumps(status(),indent=2))
     print('PASS all emulator phases; password attempts bounded, zero logout requests')
 finally:
+    try:
+        for name in adb('shell','run-as','org.starpass.router','ls','files').splitlines():
+            if name.endswith('.png'):(OUT/name).write_bytes(subprocess.check_output([ADB,'exec-out','run-as','org.starpass.router','cat','files/'+name]))
+        (OUT/'last-screen.png').write_bytes(subprocess.check_output([ADB,'exec-out','screencap','-p']))
+        (OUT/'logcat.txt').write_text(adb('logcat','-d','-t','1500'),encoding='utf-8')
+    except Exception as error:print('Evidence collection:',error)
     server.terminate();server.wait(timeout=10)

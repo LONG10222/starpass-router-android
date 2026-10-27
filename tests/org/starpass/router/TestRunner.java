@@ -100,7 +100,7 @@ public final class TestRunner extends Instrumentation {
         try{AppUpdater.parseRelease(json,"1.1.0");}catch(Exception e){rejected=true;}check(rejected,"missing digest rejected");
         android.content.pm.ProviderInfo provider=getTargetContext().getPackageManager().resolveContentProvider(getTargetContext().getPackageName()+".updates",0);
         check(provider!=null&&!provider.exported&&provider.grantUriPermissions,"private update provider");
-        boolean wrongUri=false;try{getTargetContext().getContentResolver().getType(android.net.Uri.parse("content://"+getTargetContext().getPackageName()+".updates/../router_profile"));}catch(Exception e){wrongUri=true;}
+        boolean wrongUri=false;try{wrongUri=getTargetContext().getContentResolver().getType(android.net.Uri.parse("content://"+getTargetContext().getPackageName()+".updates/../router_profile"))==null;}catch(Exception e){wrongUri=true;}
         check(wrongUri,"provider blocks non-update paths");
         boolean readOnly=false;try{getTargetContext().getContentResolver().openFileDescriptor(UpdateProvider.uri(getTargetContext()),"w");}catch(Exception e){readOnly=true;}check(readOnly,"provider blocks write access");
         byte[] sample="verified-update".getBytes(StandardCharsets.UTF_8);
