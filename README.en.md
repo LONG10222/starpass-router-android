@@ -52,7 +52,7 @@ The manually dispatched `signed-release` workflow requires repository secrets `S
 ## Validation
 
 - 33 address/origin assertions, 35 update-policy assertions and 7 login-script cases.
-- Android 11/15 emulator suite: 1440×3200 fullscreen bounds, rotation, reachable menus, field alignment, rejected-password loop prevention, encrypted profiles and cookie preservation.
+- Android 11/15/16 emulator suite: 1440×3200 fullscreen bounds, simulated display cutout, mobile CSS viewport, rotation, reachable menus, field alignment, rejected-password loop prevention, encrypted profiles and cookie preservation.
 - Update tests cover release parsing, download integrity/cancellation, matching and mismatched actual APK signing identities, version mismatch, downgrade rejection and the read-only provider boundary.
 - Force-stop/reopen reused the session without another login. Expiring the test server's session caused one automatic login. No logout requests were sent.
 - The 1.0.0 baseline had actual iStoreOS/StarPass verification; new vendor-specific behavior still needs device confirmation.

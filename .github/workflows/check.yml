@@ -1,6 +1,7 @@
 name: checks
 on:
   push:
+    branches: [main]
   pull_request:
 permissions:
   contents: read
@@ -43,7 +44,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        api: [30, 35]
+        api: [30, 35, 36]
     steps:
       - uses: actions/checkout@v4
         with:
