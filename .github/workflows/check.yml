@@ -1,0 +1,38 @@
+name: checks
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  login-and-origin:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Address and origin policy
+        run: |
+          mkdir -p build/unit
+          javac --release 17 -encoding UTF-8 -d build/unit app/src/main/java/org/starpass/router/SitePolicy.java tests/org/starpass/router/SitePolicyTest.java
+          java -cp build/unit org.starpass.router.SitePolicyTest
+      - name: Login form boundaries
+        run: node tests/login-script.js
+      - name: Reject private build and signing artifacts
+        run: |
+          python3 - <<'PY'
+          import pathlib, subprocess
+          paths = subprocess.check_output(['git', 'ls-files', '-z']).decode().split('\0')
+          for name in filter(None, paths):
+              path = pathlib.PurePosixPath(name)
+              assert not {'.signing', '.gradle', 'build', '__pycache__'}.intersection(path.parts), name
+              assert path.suffix not in {'.apk', '.jks', '.keystore', '.idsig', '.pyc'}, name
+          print('Tracked source excludes signing keys and private build files')
+          PY
