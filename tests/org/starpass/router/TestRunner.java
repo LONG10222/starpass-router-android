@@ -75,9 +75,14 @@ public final class TestRunner extends Instrumentation {
     });}
     private void menu(String item) throws Exception {
         // AlertDialog is a separate window; use UiAutomation's accessible tree to select its item.
-        ui(()->text(activity.getWindow().getDecorView(),"菜单").performClick());Thread.sleep(250);
-        android.view.accessibility.AccessibilityNodeInfo window=getUiAutomation().getRootInActiveWindow();
-        java.util.List<android.view.accessibility.AccessibilityNodeInfo> matches=window.findAccessibilityNodeInfosByText(item);
+        ui(()->text(activity.getWindow().getDecorView(),"菜单").performClick());
+        java.util.List<android.view.accessibility.AccessibilityNodeInfo> matches=java.util.Collections.emptyList();
+        for(int attempt=0;attempt<50;attempt++){
+            android.view.accessibility.AccessibilityNodeInfo window=getUiAutomation().getRootInActiveWindow();
+            if(window!=null)matches=window.findAccessibilityNodeInfosByText(item);
+            if(!matches.isEmpty())break;Thread.sleep(200);
+        }
+        if(matches.isEmpty())screenshot("menu-missing.png");
         check(!matches.isEmpty(),"menu item "+item);
         android.view.accessibility.AccessibilityNodeInfo node=matches.get(0);
         while(node!=null&&!node.isClickable())node=node.getParent();
